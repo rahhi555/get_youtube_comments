@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@types/google-apps-script": "^1.0.41",
+    "@types/youtube": "^0.0.46"
+  }
+}
