@@ -1,9 +1,10 @@
-const MAX_RESULTS = 25;
+const MAX_RESULTS = 20;
 const mainSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("main");
 const database =  { 
   videoIdRange: () => SpreadsheetApp.getActiveSpreadsheet().getSheetByName("database").getRange('A2'),
   pageTokenRange: () => SpreadsheetApp.getActiveSpreadsheet().getSheetByName("database").getRange('B2'),
 }
+const ui = SpreadsheetApp.getUi();
 
 /**
  * 親コメントの場合 name, comment, like, publishedAt, 空白
@@ -18,10 +19,12 @@ class GetComments {
   private results: GoogleAppsScript.YouTube.Schema.CommentThreadListResponse;
   private outputAry: OutputAttributes;
   private i: number;
+  private enabledDeepL: boolean
 
-  constructor() {
+  constructor(enabledDeepL: boolean) {
     this.outputAry = [];
     this.i = 0;
+    this.enabledDeepL = enabledDeepL;
   }
 
   /** YoutubeApiからコメントスレッド群を取得する */
@@ -58,14 +61,22 @@ class GetComments {
     const outputAry = this.outputAry;
     const i = this.i;
 
+    // GoogleかDeepLで翻訳
+    let translatedText: string
+    if(this.enabledDeepL) {
+      translatedText = translateUsingDeepL(textOriginal)
+    } else {
+      translatedText = LanguageApp.translate(textOriginal, '', 'ja')
+    }
+
     outputAry.push([
       authorDisplayName,
-      LanguageApp.translate(textOriginal, '', 'ja'),
+      translatedText,
       likeCount,
       publishedAt,
       "",
     ]);
-
+    
     this.i++;
   };
 
@@ -92,69 +103,130 @@ class GetComments {
   };
 }
 
-/** コメント取得とシート出力を実行するメソッド */
-const fetchAndOutputComments = () => {
-  const ui = SpreadsheetApp.getUi();
+/** コメント取得とシート出力を実行するメソッド。引数にtrueを渡すとDeepLで翻訳 */
+const fetchAndOutputComments = (enabledDeepL: boolean) => {
+  let description = 'Youtube動画のURLを貼り付けてください。'
+  // DeepLを使用する場合は現在の使用文字数と上限を取得する。この際apiキーがなければ例外が投げられる
+  if(enabledDeepL) {
+    description += '\n' + fetchDeepLQuota()
+  }
+
   const res = ui.prompt(
     MAX_RESULTS + '件翻訳',
-    "Youtube動画IDを入力(URL最後の文字列)",
+    description,
     ui.ButtonSet.OK_CANCEL
   );
-  const text = res.getResponseText();
+  const url = res.getResponseText();
 
-  if (res.getSelectedButton() !== ui.Button.OK || text === "") return;
+  if (res.getSelectedButton() !== ui.Button.OK || url === "") {
+    ui.alert('キャンセルしました')
+    return
+  }
 
-  const getComments = new GetComments();
+  // urlからvideoID抜き出し
+  let videoId: string
+  const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#\&\?]*).*/;
+  const match = url.match(regExp);
+  if (match&&match[7].length==11) { 
+    videoId = match[7]
+  } else {
+    ui.alert('urlからvideoIdを抽出出来ませんでした。')
+    return
+  } 
+    
+  const getComments = new GetComments(enabledDeepL);
   try {
-    database.videoIdRange().setValue(text)
+    database.videoIdRange().setValue(videoId)
     getComments.fetchCommentThreads();
     getComments.outputComments();
   } catch (e) {
     const isNotBeFound = e.message.endsWith('parameter could not be found.')
     const msg = isNotBeFound ? '検索がヒットしませんでした。。。' : e.message
-    Browser.msgBox(msg);
+    ui.alert(msg);
   }
 };
 
-/** 続きからコメント取得とシート出力 */
-const fetchAndOutputCommentsNext = () => {
+/** 続きからコメント取得とシート出力。引数にtrueを渡すとDeepLで翻訳 */
+const fetchAndOutputCommentsNext = (enabledDeepL: boolean) => {
   if(!database.videoIdRange().getValue()) {
-    Browser.msgBox('databaseシートのA2にvideoIdが存在しません')
+    ui.alert('databaseシートのA2にvideoIdが存在しません')
     return
   }
 
   if(!database.pageTokenRange().getValue()) {
-    Browser.msgBox('databaseシートのB2にpageTokenが存在しません')
+    ui.alert('databaseシートのB2にpageTokenが存在しません\n(続きのコメントは無いかもしれません)')
     return
   }
 
-  const getComments = new GetComments();
+
+  let description = '前回取得したコメントの続きから実行します'
+  if(enabledDeepL) {
+    description += '\n' + fetchDeepLQuota()
+  }
+  const res = ui.alert(
+    MAX_RESULTS + '件翻訳',
+    description,
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (res !== ui.Button.OK) {
+    ui.alert('キャンセルしました')
+    return
+  }
+
+  const getComments = new GetComments(enabledDeepL);
+
   try {
     getComments.fetchCommentThreads();
     getComments.outputComments();
+    ui.alert('出力が完了しました')
   } catch (e) {
     const isNotBeFound = e.message.endsWith('parameter could not be found.')
     const msg = isNotBeFound ? '検索がヒットしませんでした。。。' : e.message
-    Browser.msgBox(msg);
+    ui.alert(msg);
   }
 };
+
+/** 翻訳メソッドをGoogle翻訳かDeepLで実行 */
+const fetchAndOutputCommentsGoogle = () => fetchAndOutputComments(false)
+const fetchAndOutputCommentsNextGoogle = () => fetchAndOutputCommentsNext(false)
+const fetchAndOutputCommentsDeepL = () => fetchAndOutputComments(true)
+const fetchAndOutputCommentsNextDeepL = () => fetchAndOutputCommentsNext(true)
+
+
+/** スプレッドシート読み込み時にYoutubeコメント翻訳メニューを追加する */
+const onOpen = () => {
+  // スプレッドシート全体を取得する
+  const spreadSheet = SpreadsheetApp.getActiveSpreadsheet()
+
+  // スプレッドシート整形
+  formatSheet()
+  
+  const items = [
+    { name: 'コメント' + MAX_RESULTS + '件翻訳(Google)', functionName: 'fetchAndOutputCommentsGoogle' },
+    { name: '続けてコメント翻訳(Google)', functionName: 'fetchAndOutputCommentsNextGoogle' },
+    null,
+    { name: 'DeepL APIキーをセット', functionName: 'setDeepLApiKey' },
+    { name: 'コメント' + MAX_RESULTS + '件翻訳(DeepL)', functionName: 'fetchAndOutputCommentsDeepL' },
+    { name: '続けてコメント翻訳(DeepL)', functionName: 'fetchAndOutputCommentsNextDeepL' },
+    null,
+    { name: '初期化', functionName: 'clearSheet' },
+  ]
+  spreadSheet.addMenu('Youtubeコメント翻訳', items)
+}
+
+/** シート整形 */
+const formatSheet = () => {
+  const header = mainSheet.getRange('A1:E1')
+  header.setValues([['名前(親)','コメント','いいね','日付','名前(子)']] )
+  header.setBackground('#b7e1cd')
+  mainSheet.setColumnWidth(2, 730)
+  mainSheet.getRangeList(['B:B']).setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP)
+}
 
 /** シート初期化 */
 const clearSheet = () => {
   mainSheet.getRange(2,1, mainSheet.getMaxRows(), mainSheet.getMaxColumns()).clear()
   database.videoIdRange().clear()
   database.pageTokenRange().clear()
-}
-
-/** スプレッドシート読み込み時にYoutubeコメント翻訳メニューを追加する */
-const onOpen = () => {
-  // スプレッドシート全体を取得する
-  const spreadSheet = SpreadsheetApp.getActiveSpreadsheet()
-  const items = [
-    { name: 'コメント' + MAX_RESULTS + '件翻訳', functionName: 'fetchAndOutputComments' },
-    { name: '続けてコメント翻訳', functionName: 'fetchAndOutputCommentsNext' },
-    null,
-    { name: '初期化', functionName: 'clearSheet' },
-  ]
-  spreadSheet.addMenu('Youtubeコメント翻訳', items)
+  formatSheet()
 }
