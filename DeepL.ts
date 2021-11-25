@@ -16,25 +16,31 @@ const setDeepLApiKey = () => {
   ui.alert('DeepL APIキーをセットしました。 APIキー:' + res.getResponseText())
 }
 
-/** DeepLのご利用文字数と残り文字数を取得 */
+/** 
+ * DeepLのご利用文字数と残り文字数を取得
+ * 原因不明の Exception: Address unavailable: https://api-free.deepl.com/v2/usage エラーが発生する場合がある
+ * */
 const fetchDeepLQuota = () => {
-  const apiKey = PropertiesService.getUserProperties().getProperty(DEEPL_API_KEY)
-  if(!apiKey) throw new Error('DeepL APIキーがセットされていません。APIキーをセットしてから再度実行してください。')
+  try {
+    const apiKey = PropertiesService.getUserProperties().getProperty(DEEPL_API_KEY)
+    if(!apiKey) throw new Error('DeepL APIキーがセットされていません。APIキーをセットしてから再度実行してください。')
 
-  const options: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions = {
-    method: "get",
-    headers: { 'Authorization': `DeepL-Auth-Key ${apiKey}` },
-    muteHttpExceptions: true
-  }
+    const options: GoogleAppsScript.URL_Fetch.URLFetchRequestOptions = {
+      method: "get",
+      headers: { 'Authorization': `DeepL-Auth-Key ${apiKey}` },
+    }
 
-  const res = UrlFetchApp.fetch('https://api-free.deepl.com/v2/usage', options)
-  const errorMsg = returnDeepLErrorMsg(res.getResponseCode())
-  // errorMsgがnullでければエラーが発生したということなので、例外を投げてスクリプト全体の処理を終了させる
-  if(errorMsg) throw new Error(errorMsg)
+    // DeepLのurl。無料だと'-free'が入る。APIキーの末尾に:fxがついていたら無料プラン
+    const deeplUsageURL = apiKey.endsWith(':fx') ? 'https://api-free.deepl.com/v2/usage' : 'https://api.deepl.com/v2/usage'
 
-  const json = res.getContentText()
-  const { character_count, character_limit } = JSON.parse(json) as { character_count: number, character_limit: number }
-  return `(DeepL使用状況 : ${character_count} / ${character_limit} )`
+    const res = UrlFetchApp.fetch(deeplUsageURL, options)
+
+    const json = res.getContentText()
+    const { character_count, character_limit } = JSON.parse(json) as { character_count: number, character_limit: number }
+    return `(DeepL使用状況 : ${character_count} / ${character_limit} )`
+  } catch {
+    return '\nDeepL使用状況を取得できませんでした。以下のurlから確認できます。\nhttps://www.deepl.com/ja/pro-account/usage'
+  } 
 }
 
 /** DeepLによる翻訳 */
@@ -48,7 +54,9 @@ const translateUsingDeepL = (text: string)  => {
     muteHttpExceptions: true
   }
 
-  const res = UrlFetchApp.fetch('https://api-free.deepl.com/v2/translate', options)
+  const deeplTranslateURL = apiKey.endsWith(':fx') ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate'
+
+  const res = UrlFetchApp.fetch(deeplTranslateURL, options)
   const errorMsg = returnDeepLErrorMsg(res.getResponseCode())
 
   if(errorMsg) throw new Error(errorMsg)

@@ -8,9 +8,7 @@ const ui = SpreadsheetApp.getUi();
 
 /**
  * 親コメントの場合 name, comment, like, publishedAt, 空白
- * 子コメントの場合 空白, comment, like, publishedAt, name
- *
- * 子コメントは親コメントに対して一列右にずれているような見た目にする
+ * 子コメントの場合 '→', comment, like, publishedAt, name
  */
 type OutputAttributes = [string, string, number, string, string][];
 

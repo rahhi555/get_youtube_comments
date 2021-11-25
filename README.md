@@ -1,0 +1,1 @@
+![](https://github.com/rahhi555/github_image_garage/blob/master/hairsalon_bayashi/0A87A309-633B-4A8F-ACD2-D3B006AC287E_1_105_c.jpeg)
